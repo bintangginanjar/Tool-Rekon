@@ -1,20 +1,27 @@
 import scrapy
 import urllib
 import pandas as pd
+import json
 
 from scrapy.loader import ItemLoader
 from rekon.items import RekonItem
+from bs4 import BeautifulSoup
+from scrapy.http import FormRequest
 
 
 class TopedSpider(scrapy.Spider):
     name = 'toped'
     filePath = '../Tokopedia'
 
-    fileName = '/data_rekon_toped_juli_2021.csv'
+    fileName = '/data_rekon_toped_agustus_2021.csv'
 
     targetFile = filePath + fileName
-    periodeRekon = '07'
+    periodeRekon = '08'
     tahunRekon = '2021'
+    pidPatt = 'P21'
+
+    BASE_URL_PID = 'https://pid.posindonesia.co.id/lacak/admin/'
+    BASE_URL_KENDALI = 'https://kendali-ipos.posindonesia.co.id/assets/modules/main-login-dashboard/modul/lacak-kiriman-403/model.php'
 
     custom_settings = {
         'FEED_EXPORT_FIELDS': [
@@ -74,27 +81,61 @@ class TopedSpider(scrapy.Spider):
         for index, row in dfAwb.iterrows():
             awb = row['awb']
 
-            BASE_URL = 'https://kendali-ipos.posindonesia.co.id/assets/modules/main-login-dashboard/modul/lacak-kiriman-403/model.php'
+            if self.pidPatt in awb:
+                self.logger.info('PID')
 
-            params = {
-                'q': 'UxSR3i~ooj74Ifff5fpj4Nv9VZp4BFArp24qtUkyR7k=',
-                'folder_modul': 'modul',
-                'str1': awb,
-                'str2': 'detailContent_1',
-                'str3': '5'
-            }
+                params = {
+                    'vBarcode': awb,
+                }
 
-            targetUrl = f'{BASE_URL}/?{urllib.parse.urlencode(params)}'
+                targetUrl = self.BASE_URL_PID + 'lacak_item_banyak.php'
+
+                prodResponse = FormRequest(
+                    targetUrl,
+                    formdata=params,
+                    callback=self.parsePid,
+                    meta={
+                        'awbRekon': awb,
+                        'mpCode': getMpCode(self.fileName),
+                        'periodeRekon': self.periodeRekon,
+                        'tahunRekon': self.tahunRekon,
+                        'source': 'pid'}
+                )
+
+                yield prodResponse
+
+            else:
+                self.logger.info('Kendali')
+
+                params = {
+                    'q': 'UxSR3i~ooj74Ifff5fpj4Nv9VZp4BFArp24qtUkyR7k=',
+                    'folder_modul': 'modul',
+                    'str1': awb,
+                    'str2': 'detailContent_1',
+                    'str3': '5'
+                }
+
+                targetUrl = f'{self.BASE_URL_KENDALI}/?{urllib.parse.urlencode(params)}'
+
+                prodResponse = scrapy.Request(
+                    targetUrl,
+                    callback=self.parseKendali,
+                    meta={
+                        'awbRekon': awb,
+                        'mpCode': getMpCode(self.fileName),
+                        'periodeRekon': self.periodeRekon,
+                        'tahunRekon': self.tahunRekon,
+                        'source': 'kendali'
+                    }
+                )
+                prodResponse.meta['dont_cache'] = True
+                yield prodResponse
 
             logMessage = 'Data number ' + str(i)
             self.logger.info(logMessage)
-            prodResponse = scrapy.Request(targetUrl, callback=self.parse, meta={'awbRekon': awb, 'mpCode': getMpCode(
-                self.fileName), 'periodeRekon': self.periodeRekon, 'tahunRekon': self.tahunRekon})
-            prodResponse.meta['dont_cache'] = True
-            yield prodResponse
             i = i + 1
 
-    def parse(self, response):
+    def parseKendali(self, response):
         self.logger.info('Parse Toped')
 
         loader = ItemLoader(item=RekonItem(), response=response)
@@ -102,6 +143,7 @@ class TopedSpider(scrapy.Spider):
         loader.add_value('mpCode', response.meta['mpCode'])
         loader.add_value('periodeRekon', response.meta['periodeRekon'])
         loader.add_value('tahunRekon', response.meta['tahunRekon'])
+        loader.add_value('source', response.meta['source'])
         loader.add_xpath(
             'awbKendali', '//tr[contains(@bgcolor, "white")][2]/td[2]/text()')
         loader.add_xpath(
@@ -143,6 +185,83 @@ class TopedSpider(scrapy.Spider):
                          '//center//tr[last()-1]//td[1]/text()')
         loader.add_xpath('tanggalStatusAkhir',
                          '//center//tr[last()-1]//td[3]/text()')
+
+        yield loader.load_item()
+
+        pass
+
+    def parsePid(self, response):
+        self.logger.info('Parse PID')
+        jsonResponse = json.loads(response.body)
+        # self.logger.info(jsonResponse['desk_mess'])
+
+        soup = BeautifulSoup(jsonResponse['desk_mess'], 'html.parser')
+        awbList = soup.find_all('a')
+
+        urlParam = awbList[0]['href']
+        urlParam = urlParam.split('=')
+        urlParam = urlParam[1]
+        self.logger.info(urlParam)
+
+        targetUrl = self.BASE_URL_PID + 'detail_lacak_banyak.php?id=' + urlParam
+        self.logger.info(targetUrl)
+        # self.logger.info(response.meta['awbRekon'])
+
+        prodResponse = scrapy.Request(
+            targetUrl,
+            callback=self.parsePidDetail,
+            meta={
+                'awbRekon': response.meta['awbRekon'],
+                'mpCode': response.meta['mpCode'],
+                'periodeRekon': response.meta['periodeRekon'],
+                'tahunRekon': response.meta['tahunRekon'],
+                'source': response.meta['source']
+            }
+        )
+
+        prodResponse.meta['dont_cache'] = True
+
+        yield prodResponse
+
+    def parsePidDetail(self, response):
+        self.logger.info('Parse PID detail')
+        # self.logger.info(response.xpath('//table[1]'))
+        # /html/body/table[1]/tbody/tr[4]/td[2]/font
+
+        loader = ItemLoader(item=RekonItem(), response=response)
+        loader.add_value('awbRekon', response.meta['awbRekon'])
+        loader.add_value('mpCode', response.meta['mpCode'])
+        loader.add_value('periodeRekon', response.meta['periodeRekon'])
+        loader.add_value('tahunRekon', response.meta['tahunRekon'])
+        loader.add_value('source', response.meta['source'])
+        loader.add_xpath(
+            'awbKendali', '//table[contains(@class, "bg1")][1]/tr[2]/td[2]/font/text()')
+        loader.add_xpath(
+            'jenisLayanan', '//table[contains(@class, "bg1")][1]/tr[4]/td[2]/font/text()')
+        loader.add_xpath(
+            'tanggalKirim', '//table[contains(@class, "bg1")][1]/tr[6]/td[2]/font/text()')
+        loader.add_xpath(
+            'isiKiriman', '//table[contains(@class, "bg1")][1]/tr[7]/td[2]/font/text()')
+        loader.add_xpath(
+            'berat', '//table[contains(@class, "bg1")][1]/tr[8]/td[2]/font/text()')
+        loader.add_xpath(
+            'jenisKiriman', '//table[contains(@class, "bg1")][1]/tr[9]/td[2]/font/text()')
+        loader.add_xpath(
+            'beaDasar', '//table[contains(@class, "bg1")][1]/tr[10]/td[2]/font/text()')
+        loader.add_xpath(
+            'nilaiBarang', '//table[contains(@class, "bg1")][1]/tr[11]/td[2]/font/text()')
+        loader.add_xpath(
+            'htnb', '//table[contains(@class, "bg1")][1]/tr[12]/td[2]/font/text()')
+        loader.add_xpath(
+            'pengirim', '//table[contains(@class, "bg1")][1]/tr[13]/td[2]/font/text()')
+        loader.add_xpath(
+            'penerima', '//table[contains(@class, "bg1")][1]/tr[14]/td[2]/font/text()')
+        loader.add_xpath(
+            'kodePosPenerima', '//table[contains(@class, "bg1")][1]/tr[14]/td[2]/font/text()')
+        loader.add_xpath(
+            'statusAkhir', '//table[contains(@class, "bg1")][1]/tr[15]/td[2]/font/text()')
+        loader.add_xpath(
+            'tanggalStatusAkhir', '//table[contains(@class, "bg1")][1]/tr[15]/td[2]/font/text()')
 
         yield loader.load_item()
 

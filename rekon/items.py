@@ -10,6 +10,7 @@ from scrapy.item import Item, Field
 from itemloaders.processors import MapCompose, TakeFirst, Identity
 from datetime import datetime
 
+
 class RekonItem(Item):
     # define the fields for your item here like:
     # name = scrapy.Field()
@@ -18,6 +19,7 @@ class RekonItem(Item):
     mpCode = Field()
     periodeRekon = Field()
     tahunRekon = Field()
+    source = Field()
     awbKendali = Field()
     jenisLayanan = Field()
     tanggalKirim = Field()
@@ -49,5 +51,5 @@ class RekonItem(Item):
     ketStatusAntar = Field()
     penerimaKiriman = Field()
     waktuUpdateStatus = Field()
-    
+
     pass
