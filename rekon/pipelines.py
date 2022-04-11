@@ -183,7 +183,10 @@ class DataParsePipeline(object):
             return kodepos
         else:
             kodepos = text.split(';')
-            kodepos = kodepos[3].replace(' ', '')
+            if (len(kodepos) < 4):
+                kodepos = ''
+            else:
+                kodepos = kodepos[3].replace(' ', '')
 
             return kodepos
 
@@ -209,8 +212,11 @@ class DataParsePipeline(object):
 
     def getTanggalKirim(self, text):
         text = text.split(' ')
+        text = text[0].split('-')
 
-        return text[0]
+        tglKirim = text[2] + '-' + text[1] + '-' + text[0]
+
+        return tglKirim
 
     def getStatusAkhir(self, text):
         text = text.split(' ')
@@ -225,6 +231,8 @@ class DataParsePipeline(object):
 
     def getBerat(self, text):
         berat = re.findall('[0-9.] Kg', text)
+        berat = berat[0].replace(' Kg', '')
+        berat = round(float(berat) * 1000)
 
         return berat
 
@@ -329,7 +337,7 @@ class DataParsePipeline(object):
         adapter = ItemAdapter(item)
 
         if adapter.get('berat'):
-            item['berat'] = self.getBerat(item['berat'][0])[0]
+            item['berat'] = self.getBerat(item['berat'][0])
         else:
             item['berat'] = 0
 
@@ -389,6 +397,39 @@ class DataParsePipeline(object):
 
 
 class RekonStatusPipeline(object):
+
+    # for toped only
+    def isTanggalToped(self, tglKirim, periodeRekon, tahunRekon):
+        x = tglKirim.split('-')
+
+        # if (x[1] == periodeRekon):
+        if (x[1] == periodeRekon) & (x[2] == tahunRekon):
+            return True
+        else:
+            dateList = []
+            isValid = False
+            # firstDate = date.today().replace(day=1) - relativedelta(months=2)
+            lastDate = date.today().replace(day=calendar.monthrange(
+                date.today().year, date.today().month)[1])
+            lastDatePreviousMonth = lastDate - relativedelta(months=2)
+            # print('Today date', firstDate)
+            # print('Last date', lastDate)
+            # print('Last date previous month', lastDatePreviousMonth)
+
+            for i in range(4):
+                tempLastDate = lastDatePreviousMonth - \
+                    relativedelta(days=i-1)
+                # tempLastDate = tempLastDate.strftime('%d-%m-%Y')
+                # print('tempLastDate', tempLastDate.strftime('%d-%m-%Y'))
+                dateList.append(tempLastDate.strftime('%d-%m-%Y'))
+
+            for x in dateList:
+                if tglKirim in x:
+                    isValid = True
+
+            return isValid
+
+    # for non toped
     def getStatusRekon(self, tglKirim, periodeRekon, tahunRekon):
         # periodeRekon = '12'
         x = tglKirim.split('-')
@@ -399,13 +440,33 @@ class RekonStatusPipeline(object):
         else:
             return False
 
-    def rekonStatusKendali(self, item, spider):
+    def rekonStatusToped(self, item, spider):
+        adapter = ItemAdapter(item)
+
+        if adapter.get('tanggalKirim') and adapter.get('jenisLayanan'):
+            if (self.isTanggalToped(item['tanggalKirim'], item['periodeRekon'], item['tahunRekon']) == True):
+                if (('KILAT KHUSUS' in item['jenisLayanan']) == True) | (('PKH' in item['jenisLayanan']) == True):
+                    item['statusRekon'] = 'VALID'
+                    item['ketRekon'] = 'VALID'
+                else:
+                    item['statusRekon'] = 'INVALID'
+                    item['ketRekon'] = 'DI LUAR PRODUK'
+            else:
+                item['statusRekon'] = 'INVALID'
+                item['ketRekon'] = 'DI LUAR PERIODE'
+        else:
+            item['statusRekon'] = 'INVALID'
+            item['ketRekon'] = 'DI LUAR PRODUK'
+
+        return item
+
+    def rekonStatusMp(self, item, spider):
         adapter = ItemAdapter(item)
 
         # check package validity
         if adapter.get('tanggalKirim') and adapter.get('jenisLayanan'):
             if (self.getStatusRekon(item['tanggalKirim'], item['periodeRekon'], item['tahunRekon']) == True):
-                if (('KILAT KHUSUS' in item['jenisLayanan']) == True) | (('Express' in item['jenisLayanan']) == True):
+                if (('KILAT KHUSUS' in item['jenisLayanan']) == True) | (('Express' in item['jenisLayanan']) == True) | (('PKH' in item['jenisLayanan']) == True) | (('PE' in item['jenisLayanan']) == True):
                     item['statusRekon'] = 'VALID'
                     item['ketRekon'] = 'VALID'
                 else:
@@ -427,11 +488,10 @@ class RekonStatusPipeline(object):
         logging.info("****Rekon status****")
 
     def process_item(self, item, spider):
-        if (item['source'][0] == 'kendali'):
-            return self.rekonStatusKendali(item, spider)
-
-        if (item['source'][0] == 'pid'):
-            return self.rekonStatusPid(item, spider)
+        if (item['mpCode'] == 'toped'):
+            return self.rekonStatusToped(item, spider)
+        else:
+            return self.rekonStatusMp(item, spider)
 
 
 class RekonStatusTopedPipeline(object):
@@ -454,8 +514,9 @@ class RekonStatusTopedPipeline(object):
 
             for i in range(4):
                 tempLastDate = lastDatePreviousMonth - \
-                    relativedelta(days=i)
+                    relativedelta(days=i-1)
                 # tempLastDate = tempLastDate.strftime('%d-%m-%Y')
+                # print('tempLastDate', tempLastDate.strftime('%d-%m-%Y'))
                 dateList.append(tempLastDate.strftime('%d-%m-%Y'))
 
             for x in dateList:
@@ -464,12 +525,15 @@ class RekonStatusTopedPipeline(object):
 
             return isValid
 
-    def rekonStatusTopedKendali(self, item, spider):
+    def __init__(self):
+        logging.info("****Rekon status Tokopedia****")
+
+    def process_item(self, item, spider):
         adapter = ItemAdapter(item)
 
         if adapter.get('tanggalKirim') and adapter.get('jenisLayanan'):
             if (self.getStatusTanggal(item['tanggalKirim'], item['periodeRekon'], item['tahunRekon']) == True):
-                if (('KILAT KHUSUS' in item['jenisLayanan']) == True):
+                if (('KILAT KHUSUS' in item['jenisLayanan']) == True) | (('PKH' in item['jenisLayanan']) == True):
                     item['statusRekon'] = 'VALID'
                     item['ketRekon'] = 'VALID'
                 else:
@@ -484,15 +548,10 @@ class RekonStatusTopedPipeline(object):
 
         return item
 
-    def rekonStatusTopedPid(self, item, spider):
-        return item
-
-    def __init__(self):
-        logging.info("****Rekon status Tokopedia****")
-
-    def process_item(self, item, spider):
+        '''
         if (item['source'][0] == 'kendali'):
             return self.rekonStatusTopedKendali(item, spider)
 
         if (item['source'][0] == 'pid'):
             return self.rekonStatusTopedPid(item, spider)
+        '''
