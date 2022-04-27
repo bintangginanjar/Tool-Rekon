@@ -2,6 +2,7 @@ import scrapy
 import urllib
 import pandas as pd
 import json
+import re
 
 from scrapy.loader import ItemLoader
 from rekon.items import RekonItem
@@ -12,16 +13,18 @@ from scrapy.http import FormRequest
 class RekonSpider(scrapy.Spider):
     name = 'rekon'
     #filePath = '../Tokopedia'
-    filePath = '../Bukalapak'
+    #filePath = '../Bukalapak'
     #filePath = '../Shopee'
+    filePath = '../Lion Parcel'
 
-    fileName = '/data_rekon_bl_februari_2022.csv'
-    #fileName = '/data_rekon_toped_februari_2022.csv'
+    #fileName = '/data_rekon_toped_maret_failed_2022.csv'
+    #fileName = '/data_rekon_bl_maret_2022.csv'
+    fileName = '/data_rekon_lp_jan_okt_ext_230221.csv'
 
     targetFile = filePath + fileName
-    periodeRekon = '02'
+    periodeRekon = '01'
     tahunRekon = '2022'
-    pidPatt = 'P21'
+    pidPatt = 'P2[0-9]'
 
     BASE_URL_PID = 'https://pid.posindonesia.co.id/lacak/admin/'
     BASE_URL_KENDALI = 'https://kendali-ipos.posindonesia.co.id/assets/modules/main-login-dashboard/modul/lacak-kiriman-403/model.php'
@@ -64,7 +67,7 @@ class RekonSpider(scrapy.Spider):
         'ITEM_PIPELINES': {
             'rekon.pipelines.DataCleanPipeline': 100,
             'rekon.pipelines.DataParsePipeline': 200,
-            # 'rekon.pipelines.RekonStatusTopedPipeline': 300,
+            #'rekon.pipelines.RekonStatusTopedPipeline': 300,
             'rekon.pipelines.RekonStatusPipeline': 300,
         }
     }
@@ -84,8 +87,11 @@ class RekonSpider(scrapy.Spider):
 
         for index, row in dfAwb.iterrows():
             awb = row['awb']
+            #awb = row['AWB Number']
 
-            if self.pidPatt in awb:
+            #if re.search(self.pidPatt, awb):
+            if re.search(self.pidPatt, awb.decode('utf-8')):
+            #if self.pidPatt in awb:
                 self.logger.info('PID')
 
                 params = {
